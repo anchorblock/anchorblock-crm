@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": ".",
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel"
+    }
+  },
+  "daemons": {
+    "worker": {
+      "root": ".",
+      "entrypoint": "Dockerfile.vercel",
+      "command": [
+        "sh",
+        "-c",
+        "export DISABLE_CRON_JOBS_REGISTRATION=false; exec /app/entrypoint.sh yarn worker:prod"
+      ],
+      "instances": { "bom1": 1 }
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": { "service": "web" }
+    }
+  ]
+}
