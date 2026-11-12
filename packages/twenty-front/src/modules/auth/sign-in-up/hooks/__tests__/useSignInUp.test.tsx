@@ -50,10 +50,14 @@ jest.mock(
 
 const signUpWithCredentialsMock = jest.fn();
 const signUpWithCredentialsInWorkspaceMock = jest.fn();
+const signInWithCredentialsMock = jest.fn();
+const signInWithCredentialsInWorkspaceMock = jest.fn();
 
 (useAuth as jest.Mock).mockReturnValue({
   signUpWithCredentialsInWorkspace: signUpWithCredentialsInWorkspaceMock,
   signUpWithCredentials: signUpWithCredentialsMock,
+  signInWithCredentials: signInWithCredentialsMock,
+  signInWithCredentialsInWorkspace: signInWithCredentialsInWorkspaceMock,
   checkUserExists: { checkUserExistsQuery: jest.fn() },
 });
 
@@ -64,9 +68,12 @@ const credentials: Form = {
   captchaToken: '',
 };
 
-const renderUseSignInUp = (workspacePublicData: PublicWorkspaceData | null) => {
+const renderUseSignInUp = (
+  workspacePublicData: PublicWorkspaceData | null,
+  mode = SignInUpMode.SignUp,
+) => {
   jotaiStore.set(workspacePublicDataState.atom, workspacePublicData);
-  jotaiStore.set(signInUpModeState.atom, SignInUpMode.SignUp);
+  jotaiStore.set(signInUpModeState.atom, mode);
 
   return renderHook(() => useSignInUp({} as UseFormReturn<Form>), {
     wrapper: ({ children }) => (
@@ -115,5 +122,34 @@ describe('useSignInUp > submitCredentials > sign-up routing', () => {
     );
     expect(signUpWithCredentialsMock).toHaveBeenCalledTimes(1);
     expect(signUpWithCredentialsInWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it('signs in without a workspace so an existing user can finish creating the first workspace', async () => {
+    const { result } = renderUseSignInUp(null, SignInUpMode.SignIn);
+
+    await act(() => result.current.submitCredentials(credentials));
+
+    expect(signInWithCredentialsMock).toHaveBeenCalledWith(
+      'someone@example.com',
+      'Passw0rd!',
+      'captcha-token',
+    );
+    expect(signInWithCredentialsInWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  it('signs in to the resolved workspace when one exists', async () => {
+    const { result } = renderUseSignInUp(
+      { id: 'workspace-id' } as PublicWorkspaceData,
+      SignInUpMode.SignIn,
+    );
+
+    await act(() => result.current.submitCredentials(credentials));
+
+    expect(signInWithCredentialsInWorkspaceMock).toHaveBeenCalledWith(
+      'someone@example.com',
+      'Passw0rd!',
+      'captcha-token',
+    );
+    expect(signInWithCredentialsMock).not.toHaveBeenCalled();
   });
 });
