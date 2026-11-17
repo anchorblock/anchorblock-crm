@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,7 +16,28 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # nx affected ignores CI-only diffs, so a change to CI itself (or a manual run) tests every project.
+  changes:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      run-all: ${{ steps.check.outputs.run-all }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 2
+      - id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || git diff --name-only HEAD^1 HEAD | grep -qE '^\.github/(workflows/ci\.yaml|actions/)'; then
+            echo "run-all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run-all=false" >> "$GITHUB_OUTPUT"
+          fi
+
   front:
+    needs: changes
     timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
@@ -40,14 +62,17 @@ jobs:
         with:
           tag: scope:frontend
           tasks: reset:env
+          all: ${{ needs.changes.outputs.run-all }}
       - name: Run ${{ matrix.tasks }}
         uses: ./.github/actions/nx-affected
         with:
           tag: scope:frontend
           tasks: ${{ matrix.tasks }}
+          all: ${{ needs.changes.outputs.run-all }}
           args: ${{ matrix.shard && format('--shard={0}/3', matrix.shard) || '' }}
 
   server-lint-typecheck:
+    needs: changes
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
@@ -61,8 +86,10 @@ jobs:
         with:
           tag: scope:backend
           tasks: lint,typecheck
+          all: ${{ needs.changes.outputs.run-all }}
 
   server-test:
+    needs: changes
     timeout-minutes: 30
     runs-on: ubuntu-latest
     strategy:
@@ -82,8 +109,10 @@ jobs:
           tag: scope:backend
           tasks: test:ci
           args: --shard=${{ matrix.shard }}/4
+          all: ${{ needs.changes.outputs.run-all }}
 
   shared:
+    needs: changes
     timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
@@ -103,6 +132,7 @@ jobs:
         with:
           tag: scope:shared
           tasks: ${{ matrix.task }}
+          all: ${{ needs.changes.outputs.run-all }}
 
   upgrade-mutation-guard:
     if: github.event_name == 'pull_request'
@@ -132,7 +162,7 @@ jobs:
     if: always() && !cancelled()
     timeout-minutes: 5
     runs-on: ubuntu-latest
-    needs: [front, server-lint-typecheck, server-test, shared, upgrade-mutation-guard]
+    needs: [changes, front, server-lint-typecheck, server-test, shared, upgrade-mutation-guard]
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: exit 1
