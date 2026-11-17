@@ -12,6 +12,10 @@ inputs:
     default: 'ci'
   args:
     required: false
+  all:
+    description: Run the tasks on every project with the tag instead of only affected ones.
+    required: false
+    default: 'false'
 runs:
   using: "composite"
   steps:
@@ -33,7 +37,13 @@ runs:
         NX_PARALLEL: ${{ inputs.parallel }}
         NX_TAG: ${{ inputs.tag }}
         NX_ARGS: ${{ inputs.args }}
+        NX_ALL: ${{ inputs.all }}
       # Nx buffers task output into an internal stream by default, so a task
       # that gets killed takes its buffer with it: the log ends on whatever last
       # happened to flush and the stack trace is never printed.
-      run: npx nx affected --nxBail --outputStyle=stream --configuration="$NX_CONFIGURATION" -t="$NX_TASKS" --parallel="$NX_PARALLEL" --exclude="*,!tag:$NX_TAG" $NX_ARGS
+      run: |
+        if [ "$NX_ALL" = "true" ]; then
+          npx nx run-many --nxBail --outputStyle=stream --configuration="$NX_CONFIGURATION" -t="$NX_TASKS" --parallel="$NX_PARALLEL" --projects="tag:$NX_TAG" $NX_ARGS
+        else
+          npx nx affected --nxBail --outputStyle=stream --configuration="$NX_CONFIGURATION" -t="$NX_TASKS" --parallel="$NX_PARALLEL" --exclude="*,!tag:$NX_TAG" $NX_ARGS
+        fi
