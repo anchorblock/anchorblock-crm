@@ -71,3 +71,18 @@ screenshots/
 /.diag*.mjs
 /.compare*.mjs
 /.narrow*.mjs
+
+# Anchorblock: local secrets, logs and tooling state
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+*.dump
+.idea/
+*.swp
+Thumbs.db
+supabase/.temp/
+supabase/.branches/
