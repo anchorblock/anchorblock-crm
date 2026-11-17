@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  # nx-set-shas reads past runs to find the last green main commit.
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  front:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: '--max-old-space-size=6144'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: lint, tasks: lint }
+          - { name: typecheck, tasks: typecheck }
+          - { name: test, tasks: test, shard: 1 }
+          - { name: test, tasks: test, shard: 2 }
+          - { name: test, tasks: test, shard: 3 }
+    name: front (${{ matrix.name }}${{ matrix.shard && format(' {0}/3', matrix.shard) || '' }})
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 10
+      - uses: ./.github/actions/yarn-install
+      - name: Reset .env
+        uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:frontend
+          tasks: reset:env
+      - name: Run ${{ matrix.tasks }}
+        uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:frontend
+          tasks: ${{ matrix.tasks }}
+          args: ${{ matrix.shard && format('--shard={0}/3', matrix.shard) || '' }}
+
+  server-lint-typecheck:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 10
+      - uses: ./.github/actions/yarn-install
+      - run: npx nx build twenty-shared
+      - name: Run lint and typecheck
+        uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:backend
+          tasks: lint,typecheck
+
+  server-test:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    name: server-test (${{ matrix.shard }}/4)
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 10
+      - uses: ./.github/actions/yarn-install
+      - run: npx nx build twenty-shared
+      - name: Run unit tests
+        uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:backend
+          tasks: test:ci
+          args: --shard=${{ matrix.shard }}/4
+
+  shared:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: '--max-old-space-size=4096'
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [lint, typecheck, test]
+    name: shared + ui (${{ matrix.task }})
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 10
+      - uses: ./.github/actions/yarn-install
+      - name: Run ${{ matrix.task }}
+        uses: ./.github/actions/nx-affected
+        with:
+          tag: scope:shared
+          tasks: ${{ matrix.task }}
+
+  upgrade-mutation-guard:
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 2
+      # HEAD is the PR merge ref; its first parent is the main commit it was merged with.
+      - name: Resolve merged base commit
+        id: merged-base
+        run: |
+          if git rev-parse -q --verify HEAD^2 >/dev/null; then
+            echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/upgrade-mutation-guard
+        with:
+          base_sha: ${{ steps.merged-base.outputs.sha }}
+          allow_previous_version_mutation: ${{ contains(github.event.pull_request.labels.*.name, 'ci:allow-previous-version-upgrade-mutation') }}
+          allow_next_version_mutation: ${{ contains(github.event.pull_request.labels.*.name, 'ci:allow-next-version-upgrade-mutation') }}
+
+  # Single required check for branch protection.
+  ci-status:
+    if: always() && !cancelled()
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    needs: [front, server-lint-typecheck, server-test, shared, upgrade-mutation-guard]
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
